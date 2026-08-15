@@ -59,6 +59,7 @@ from orchestrator.core.failure import (
     StageAttemptRecord,
 )
 from orchestrator.core.governance import ActionContext, EnforcementDecision, PolicyEngine
+from orchestrator.core.replanning import ChangeEvent, ImpactAnalysis, ReplanResult
 from orchestrator.core.base_stage import BaseStage
 from orchestrator.core.context import ExecutionContext
 from orchestrator.core.graph import WorkflowDefinition
@@ -750,6 +751,279 @@ class WorkflowEngine:
                 "error": last_error_msg,
             },
         )
+
+    # ── Public replanning API ─────────────────────────────────────────────────
+
+    def analyze_impact(
+        self,
+        state: WorkflowState,
+        change_event: ChangeEvent,
+    ) -> ImpactAnalysis:
+        """
+        Determine which stages are impacted by ``change_event`` without
+        executing anything.
+
+        Operators may call this to preview the impact scope before deciding
+        whether to commit to a replan.  The WorkflowEngine.replan() method
+        calls this internally before beginning execution.
+
+        Impacted stages
+        ───────────────
+        For requirement-level changes (``originating_stage=None``):
+          all stages in the definition are impacted.
+
+        For stage-level changes (``originating_stage`` set):
+          all stages that transitively consume the originating stage's output
+          (``WorkflowDefinition.stages_reachable_from()``).
+          The originating stage itself is *preserved* — it is assumed that
+          its output was already updated before the ChangeEvent was raised.
+
+        Args:
+            state:        Current WorkflowState (used to collect stale artifact IDs).
+            change_event: Description of what changed and from which stage.
+
+        Returns:
+            ImpactAnalysis with impacted_stages, preserved_stages, and the
+            IDs of stale artifacts and decisions.
+        """
+        all_stage_names = set(self.definition.stages)
+
+        if change_event.originating_stage is None:
+            # Requirement-level change: everything must replan.
+            impacted = sorted(all_stage_names)
+        else:
+            origin = change_event.originating_stage
+            if origin not in all_stage_names:
+                raise ValueError(
+                    f"originating_stage '{origin}' is not defined in the workflow. "
+                    f"Valid stages: {sorted(all_stage_names)}"
+                )
+            impacted = sorted(self.definition.stages_reachable_from(origin))
+
+        impacted_set = set(impacted)
+        preserved = sorted(all_stage_names - impacted_set)
+
+        # Collect artifact and decision IDs that are now stale.
+        stale_artifacts: list[str] = []
+        stale_decisions: list[str] = []
+        for stage_name in impacted:
+            ctx = state.stages.get(stage_name)
+            if ctx:
+                stale_artifacts.extend(a.id for a in ctx.artifacts)
+                stale_decisions.extend(d.id for d in ctx.decisions)
+
+        # Build a human-readable rationale.
+        if change_event.originating_stage is None:
+            rationale = (
+                f"Requirement-level change ({change_event.event_type.value}): "
+                f"all {len(impacted)} stage(s) must be replanned."
+            )
+        elif not impacted:
+            rationale = (
+                f"Stage '{change_event.originating_stage}' has no downstream "
+                "dependants; no stages need replanning."
+            )
+        else:
+            rationale = (
+                f"Stage '{change_event.originating_stage}' output changed "
+                f"({change_event.event_type.value}); "
+                f"{len(impacted)} downstream stage(s) are transitively impacted: "
+                f"{', '.join(sorted(impacted))}."
+            )
+
+        return ImpactAnalysis(
+            change_event=change_event,
+            impacted_stages=impacted,
+            preserved_stages=preserved,
+            invalidated_artifact_ids=stale_artifacts,
+            invalidated_decision_ids=stale_decisions,
+            analysis_rationale=rationale,
+        )
+
+    async def replan(
+        self,
+        state: WorkflowState,
+        change_event: ChangeEvent,
+    ) -> WorkflowState:
+        """
+        Re-execute only the stages impacted by ``change_event``.
+
+        Preserves all unaffected completed stages — their outputs are reused
+        in the rebuilt ExecutionContext without re-execution.
+
+        The governance gate and approval checkpoint run normally for every
+        replanned stage, ensuring policy and approval requirements are
+        re-evaluated after the change.
+
+        Algorithm
+        ─────────
+        1. Analyze impact → identify impacted and preserved stages.
+        2. Remove impacted stages from state (their stale contexts are dropped).
+        3. Rebuild ExecutionContext from preserved completed stages only.
+        4. Re-run the execution loop, executing ONLY impacted stages in
+           dependency order (using the existing DAG topology).
+        5. Record ReplanResult in state.replan_history and emit audit events.
+
+        Args:
+            state:        Existing WorkflowState from a previous run() or replan().
+            change_event: What changed and from which stage.
+
+        Returns:
+            Updated WorkflowState with replanned stages and updated lineage.
+        """
+        from orchestrator.core.context import ExecutionContext
+
+        # 1. Analyze impact
+        impact = self.analyze_impact(state, change_event)
+
+        state.add_audit_entry(
+            "replan_initiated",
+            details={
+                "replan_cycle": state.replan_count + 1,
+                "change_type": change_event.event_type.value,
+                "originating_stage": change_event.originating_stage,
+                "change_description": change_event.change_description,
+                "impacted_stages": impact.impacted_stages,
+                "preserved_stages": impact.preserved_stages,
+                "stale_artifacts": impact.invalidated_artifact_ids,
+            },
+        )
+
+        # ── No-op path: nothing to replan ─────────────────────────────────
+        if not impact.has_impact:
+            state.add_audit_entry(
+                "replan_skipped",
+                details={
+                    "reason": "no impacted stages detected",
+                    "originating_stage": change_event.originating_stage,
+                },
+            )
+            replan_result = ReplanResult(
+                change_event=change_event,
+                impact_analysis=impact,
+                replan_cycle=state.replan_count + 1,
+                stages_replanned=[],
+                stages_preserved=impact.preserved_stages,
+                governance_reevaluations=[],
+                approvals_rerequested=[],
+                final_status=state.status.value,
+            )
+            state.replan_history.append(replan_result)
+            state.replan_count += 1
+            return state
+
+        # ── Preparation ────────────────────────────────────────────────────
+
+        impacted_set = set(impact.impacted_stages)
+
+        # Preserved-completed: stages not in impacted set that previously COMPLETED.
+        preserved_completed: set[str] = {
+            name
+            for name in impact.preserved_stages
+            if name in state.stages and state.stages[name].status == StageStatus.COMPLETED
+        }
+
+        # Drop stale stage contexts so _execute_stage creates fresh ones.
+        for stage_name in impacted_set:
+            state.stages.pop(stage_name, None)
+
+        # Rebuild ExecutionContext from preserved stages only (no stale outputs).
+        new_exec_ctx = ExecutionContext(workflow_id=state.id)
+        for stage_name in preserved_completed:
+            ctx = state.stages[stage_name]
+            new_exec_ctx.record_stage_output(
+                stage_name=stage_name,
+                output_data=ctx.output_data,
+                artifacts=ctx.artifacts,
+                decisions=ctx.decisions,
+                risks=ctx.risks,
+            )
+        state.execution_context = new_exec_ctx
+        exec_ctx = new_exec_ctx
+
+        # Track pre-replan counts so we can identify what happened DURING replan.
+        pre_policy_count = len(state.policy_evaluations)
+        pre_approval_count = len(state.approvals)
+
+        # ── Replan execution loop ──────────────────────────────────────────
+        all_stages = set(self.definition.stages)
+        completed: set[str] = set(preserved_completed)
+        failed: set[str] = set()
+
+        while True:
+            ready = self.definition.get_ready_stages(completed=completed)
+            # Only run stages that need replanning.
+            ready_to_replan = [s for s in ready if s in impacted_set]
+            if not ready_to_replan:
+                break
+
+            batch_results = await asyncio.gather(
+                *[
+                    self._execute_stage(name, state, exec_ctx)
+                    for name in ready_to_replan
+                ]
+            )
+            for stage_name, result in zip(ready_to_replan, batch_results):
+                if result:
+                    completed.add(stage_name)
+                else:
+                    failed.add(stage_name)
+
+            if failed or state.safe_stopped:
+                break
+
+        # ── Post-replan: update workflow status ───────────────────────────
+        if state.safe_stopped:
+            state.status = WorkflowStatus.STOPPED
+        elif failed:
+            state.status = WorkflowStatus.FAILED
+            # Mark impacted stages that never ran as BLOCKED.
+            unexecuted = impacted_set - completed - failed
+            for stage_name in sorted(unexecuted):
+                if stage_name not in state.stages:
+                    state.stages[stage_name] = StageContext(
+                        stage_name=stage_name,
+                        status=StageStatus.BLOCKED,
+                    )
+        elif completed >= all_stages:
+            state.status = WorkflowStatus.COMPLETED
+
+        # ── Record replan result and update lineage ───────────────────────
+        governance_reevals = [
+            e.stage_name
+            for e in state.policy_evaluations[pre_policy_count:]
+        ]
+        approval_rerequests = [
+            a.stage_name for a in state.approvals[pre_approval_count:]
+        ]
+
+        replan_result = ReplanResult(
+            change_event=change_event,
+            impact_analysis=impact,
+            replan_cycle=state.replan_count + 1,
+            stages_replanned=sorted(completed & impacted_set),
+            stages_preserved=sorted(preserved_completed),
+            governance_reevaluations=governance_reevals,
+            approvals_rerequested=approval_rerequests,
+            final_status=state.status.value,
+        )
+        state.replan_history.append(replan_result)
+        state.replan_count += 1
+        state.completed_at = _now()
+
+        state.add_audit_entry(
+            "replan_completed",
+            details={
+                "replan_cycle": replan_result.replan_cycle,
+                "stages_replanned": replan_result.stages_replanned,
+                "stages_preserved": replan_result.stages_preserved,
+                "governance_reevaluations": governance_reevals,
+                "approvals_rerequested": approval_rerequests,
+                "final_status": state.status.value,
+            },
+        )
+
+        return state
 
     def _trigger_safe_stop(
         self,

@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from orchestrator.core.failure import StageAttemptRecord
 from orchestrator.core.governance import PolicyEvaluationRecord
+from orchestrator.core.replanning import ReplanResult
 from orchestrator.core.results import (
     Approval,
     Artifact,
@@ -519,6 +520,24 @@ class WorkflowState(BaseModel):
     rolled_back_stages: list[str] = Field(
         default_factory=list,
         description="Names of stages whose rollback() was called and succeeded",
+    )
+
+    # ── Replanning history ────────────────────────────────────────────────────
+    replan_count: int = Field(
+        default=0,
+        description=(
+            "Number of replan cycles completed. 0 = never replanned. "
+            "Incremented at the end of every WorkflowEngine.replan() call."
+        ),
+    )
+    replan_history: list[ReplanResult] = Field(
+        default_factory=list,
+        description=(
+            "Append-only history of every replan cycle. "
+            "Index 0 is the first replan; index N-1 is the most recent. "
+            "Together with audit_trail, provides full provenance of why "
+            "the workflow changed course."
+        ),
     )
 
     metadata: dict[str, Any] = Field(default_factory=dict)
