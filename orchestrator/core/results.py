@@ -176,6 +176,14 @@ class ValidationResult(BaseModel):
         default_factory=dict,
         description="Supporting data (e.g. coverage %, line counts, policy keys)",
     )
+    stage: str = Field(
+        default="",
+        description=(
+            "Stage that produced this validation result. "
+            "Optional tag set by stage implementations; populated automatically "
+            "by build_lineage() when absent."
+        ),
+    )
     validated_at: datetime = Field(default_factory=_now)
 
     @property
@@ -324,6 +332,28 @@ class Approval(BaseModel):
     )
     requested_at: datetime = Field(default_factory=_now)
     decided_at: datetime | None = None
+
+    # ── Impact metadata (populated by the engine from stage/action context) ──
+    impact_level: str | None = Field(
+        default=None,
+        description="ActionImpact value of the stage/action being approved (stored as string)",
+    )
+    action_type: str | None = Field(
+        default=None,
+        description="HighImpactActionType value (stored as string)",
+    )
+    decision_rationale: str = Field(
+        default="",
+        description="Rationale returned by the approver via ApprovalDecision",
+    )
+    escalation_level: int = Field(
+        default=0,
+        description="Escalation level at which the decision was made (0 = initial)",
+    )
+    is_override: bool = Field(
+        default=False,
+        description="True when the approver explicitly overrides an agent recommendation",
+    )
 
     @property
     def is_resolved(self) -> bool:

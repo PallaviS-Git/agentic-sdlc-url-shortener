@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from orchestrator.core.failure import StageAttemptRecord
+from orchestrator.core.governance import PolicyEvaluationRecord
 from orchestrator.core.results import (
     Approval,
     Artifact,
@@ -111,6 +113,10 @@ class Task(BaseModel):
 
     Tasks form a dependency graph within a stage; the orchestrator
     respects the `depends_on` list when scheduling execution.
+
+    Provenance fields (rationale, created_by_*) record *why* the task
+    was created so that WorkflowLineage can answer the question
+    "Why was this task created, and what triggered it?"
     """
 
     id: str = Field(default_factory=_uuid)
@@ -125,6 +131,14 @@ class Task(BaseModel):
         default=None,
         description="Name of the agent responsible for executing this task",
     )
+    agent_execution_id: str | None = Field(
+        default=None,
+        description=(
+            "Unique ID for the specific agent invocation that executed this task. "
+            "Set by stage implementations when they dispatch work to an agent. "
+            "Enables correlation between tasks and agent-side telemetry."
+        ),
+    )
     expected_artifact_types: list[ArtifactType] = Field(
         default_factory=list,
         description="Artifact types this task is expected to produce",
@@ -136,6 +150,24 @@ class Task(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error: str | None = None
+
+    # ── Provenance (lineage) fields ───────────────────────────────────────────
+    stage: str = Field(
+        default="",
+        description="Stage that owns this task; populated by build_lineage() when absent",
+    )
+    rationale: str = Field(
+        default="",
+        description="Human-readable explanation of why this task was created",
+    )
+    created_by_decision_id: str | None = Field(
+        default=None,
+        description="ID of the Decision that triggered the creation of this task",
+    )
+    created_by_artifact_id: str | None = Field(
+        default=None,
+        description="ID of the Artifact that triggered the creation of this task",
+    )
 
 
 # ─── Stage definition ─────────────────────────────────────────────────────────
@@ -217,6 +249,14 @@ class StageContext(BaseModel):
     """
 
     stage_name: str
+    stage_id: str = Field(
+        default_factory=_uuid,
+        description=(
+            "Unique execution ID for this stage run. "
+            "Distinct from stage_name: two runs of the same stage in different "
+            "workflows have different stage_ids. Used for log correlation."
+        ),
+    )
     status: StageStatus = StageStatus.PENDING
     attempt: int = Field(default=0, description="Current attempt number (0-indexed)")
     max_attempts: int = Field(default=3, description="Bounded retry limit")
@@ -265,6 +305,22 @@ class StageContext(BaseModel):
     completed_at: datetime | None = None
     error: str | None = None
     rollback_performed: bool = False
+
+    # ── Retry / recovery state ────────────────────────────────────────────────
+    attempt_records: list[StageAttemptRecord] = Field(
+        default_factory=list,
+        description=(
+            "One record per failed execution attempt. "
+            "Together with StageContext.attempt these form the complete retry history. "
+            "Required for 'Recovery decisions must be traceable'."
+        ),
+    )
+    fallback_used: bool = Field(
+        default=False,
+        description=(
+            "True when the stage completed via a fallback rather than normal execution"
+        ),
+    )
 
     # ── Computed properties ───────────────────────────────────────────────────
 
@@ -316,6 +372,39 @@ class StageContext(BaseModel):
         self.decisions.extend(result.decisions)
         self.risks.extend(result.risks)
         self.validations.extend(result.validations)
+
+
+# ─── Stage transition ─────────────────────────────────────────────────────────
+
+
+class StageTransition(BaseModel):
+    """
+    Records what enabled a stage to start executing.
+
+    The engine appends one StageTransition to WorkflowState.stage_transitions
+    immediately after a stage's entry gate passes. This is the authoritative
+    record for the question "Which decision / predecessor led to this stage?"
+
+    If `driving_decision_id` is None the transition was purely mechanical —
+    all predecessor stages completed and the entry gate passed with no
+    explicit agent decision driving the choice.  WorkflowLineage.get_decision_for_transition
+    falls back to scanning decisions whose downstream_impacts list the stage.
+    """
+
+    stage_name: str = Field(description="Stage that started")
+    predecessor_stages: list[str] = Field(
+        default_factory=list,
+        description="Stages that completed to make this stage ready",
+    )
+    driving_decision_id: str | None = Field(
+        default=None,
+        description="Explicit Decision ID that drove this transition (None = mechanical)",
+    )
+    transition_reason: str = Field(
+        default="",
+        description="Human-readable explanation of why this stage started",
+    )
+    started_at: datetime = Field(default_factory=_now)
 
 
 # ─── Audit ────────────────────────────────────────────────────────────────────
@@ -380,6 +469,16 @@ class WorkflowState(BaseModel):
         description="All human approval records for this workflow run",
     )
 
+    # ── Stage transitions (lineage) ────────────────────────────────────────────
+    stage_transitions: list[StageTransition] = Field(
+        default_factory=list,
+        description=(
+            "One StageTransition per stage execution, appended by the engine "
+            "after the entry gate passes. Used by WorkflowLineage to answer "
+            "'Which decision led to the next stage?'"
+        ),
+    )
+
     # ── Audit trail ───────────────────────────────────────────────────────────
     audit_trail: list[AuditEntry] = Field(default_factory=list)
 
@@ -395,9 +494,44 @@ class WorkflowState(BaseModel):
         description="ExecutionContext accumulating cross-stage outputs",
     )
 
+    # ── Governance / policy evaluation records ───────────────────────────────
+    policy_evaluations: list[PolicyEvaluationRecord] = Field(
+        default_factory=list,
+        description=(
+            "One PolicyEvaluationRecord per governance gate evaluation. "
+            "Provides auditable evidence that policy guardrails were checked "
+            "before each high-impact action ran."
+        ),
+    )
+
+    # ── Safe-stop and rollback tracking ──────────────────────────────────────
+    safe_stopped: bool = Field(
+        default=False,
+        description=(
+            "True when the workflow was halted by a safe-stop event. "
+            "Status is STOPPED; state is preserved for operator investigation."
+        ),
+    )
+    safe_stop_reason: str = Field(
+        default="",
+        description="Human-readable explanation of what triggered the safe-stop",
+    )
+    rolled_back_stages: list[str] = Field(
+        default_factory=list,
+        description="Names of stages whose rollback() was called and succeeded",
+    )
+
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
+    completed_at: datetime | None = Field(
+        default=None,
+        description=(
+            "Wall-clock time when the workflow reached a terminal state "
+            "(COMPLETED, FAILED, or STOPPED). Set by WorkflowEngine at the "
+            "end of run(). Used to compute end-to-end latency."
+        ),
+    )
 
     # ── Stage mutation helpers ────────────────────────────────────────────────
 
@@ -433,6 +567,11 @@ class WorkflowState(BaseModel):
         self.approvals.append(approval)
         self.updated_at = _now()
 
+    def add_stage_transition(self, transition: StageTransition) -> None:
+        """Record a stage transition after its entry gate passes."""
+        self.stage_transitions.append(transition)
+        self.updated_at = _now()
+
     # ── State queries ─────────────────────────────────────────────────────────
 
     @property
@@ -452,6 +591,14 @@ class WorkflowState(BaseModel):
             for name, ctx in self.stages.items()
             if ctx.status == StageStatus.FAILED
         }
+
+    @property
+    def all_tasks(self) -> list[Task]:
+        """Flattened list of all tasks created across all stages."""
+        result: list[Task] = []
+        for ctx in self.stages.values():
+            result.extend(ctx.tasks)
+        return result
 
     @property
     def all_artifacts(self) -> list[Artifact]:
