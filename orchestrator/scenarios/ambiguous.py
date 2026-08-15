@@ -38,8 +38,8 @@ Execution trace
 
 ClarificationGateway
 ────────────────────
-Production: HumanClarificationGateway blocks the async event loop until
-            answers are submitted via the operator UI or API.
+Production: HumanClarificationGateway prompts on the CLI (injectable I/O for
+            tests) until each clarification question is answered.
 Testing:    PresetClarificationGateway returns pre-configured answers
             immediately.  Use DefaultAnswerGateway to test the "safe defaults
             path" where some questions are unanswered.
@@ -59,8 +59,10 @@ Public API
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -262,6 +264,84 @@ class DefaultAnswerGateway(ClarificationGateway):
             )
             for q in questions
         ]
+
+
+class HumanClarificationGateway(ClarificationGateway):
+    """
+    CLI human-in-the-loop clarification gateway for live demos.
+
+    For each question, prints context/options and prompts for an answer.
+    Empty input applies the question's safe ``default``. Inject ``input_fn`` /
+    ``output_fn`` in tests to avoid real stdin.
+
+    Example::
+
+        gateway = HumanClarificationGateway()
+        await run_ambiguous_scenario(clarification_gateway=gateway)
+    """
+
+    def __init__(
+        self,
+        *,
+        input_fn: Callable[..., str] | None = None,
+        output_fn: Callable[..., None] | None = None,
+    ) -> None:
+        self._input: Callable[..., str] = input_fn if input_fn is not None else input
+        self._output: Callable[..., None] = (
+            output_fn if output_fn is not None else print
+        )
+
+    async def clarify(
+        self, questions: list[ClarificationQuestion]
+    ) -> list[ClarificationAnswer]:
+        answers: list[ClarificationAnswer] = []
+        now = _now()
+        self._output("")
+        self._output("=" * 60)
+        self._output("CLARIFICATION REQUIRED")
+        self._output(f"  {len(questions)} question(s) — empty answer uses safe default")
+        self._output("=" * 60)
+
+        for q in questions:
+            self._output("")
+            self._output(f"[{q.id}] {q.question}")
+            self._output(f"  Context : {q.context}")
+            self._output(f"  Impact  : {q.impact}")
+            if q.options:
+                self._output("  Options:")
+                for opt in q.options:
+                    self._output(f"    - {opt}")
+            if q.default:
+                self._output(f"  Default : {q.default}")
+
+            raw = await asyncio.to_thread(
+                self._input, f"  Answer for {q.id} (Enter=default): "
+            )
+            text = (raw or "").strip()
+            if text:
+                answers.append(
+                    ClarificationAnswer(
+                        question_id=q.id,
+                        answer=text,
+                        answered_by="human",
+                        answered_at=now,
+                        notes="CLI human response",
+                    )
+                )
+            else:
+                answers.append(
+                    ClarificationAnswer(
+                        question_id=q.id,
+                        answer=q.default or "not specified",
+                        answered_by="default",
+                        answered_at=now,
+                        notes=f"Operator accepted safe default: '{q.default}'",
+                    )
+                )
+
+        self._output("")
+        self._output("Clarification complete.")
+        return answers
 
 
 # ─── Stage helpers ────────────────────────────────────────────────────────────

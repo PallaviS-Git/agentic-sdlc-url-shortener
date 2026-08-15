@@ -45,11 +45,20 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+coverage.json
 *.cover
 *.py.cover
 .hypothesis/
 .pytest_cache/
+pytest-cache-files-*/
 cover/
+
+# Local orchestrator / scenario demo artifacts
+orchestrator_state.json
+*_report.json
+greenfield_report.json
+brownfield_report.json
+ambiguous_report.json
 
 # Translations
 *.mo

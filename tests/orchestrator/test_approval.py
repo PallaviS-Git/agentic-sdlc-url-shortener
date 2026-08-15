@@ -831,3 +831,93 @@ class TestAgentActionModel:
         }
         actual = {t.value for t in HighImpactActionType}
         assert required <= actual
+
+
+# ─── HumanApprovalGateway (CLI) ───────────────────────────────────────────────
+
+
+class TestHumanApprovalGateway:
+    async def test_approves_on_yes(self) -> None:
+        from orchestrator.core.autonomy import HumanApprovalGateway
+
+        outputs: list[str] = []
+        gateway = HumanApprovalGateway(
+            approver="operator-a",
+            input_fn=lambda _prompt="": "y",
+            output_fn=lambda *a, **k: outputs.append(" ".join(str(x) for x in a)),
+        )
+        request = ApprovalRequest(
+            workflow_id="wf-1",
+            stage_name="release_readiness",
+            stage_summary="Final release check",
+            risk_context={"severity": "medium"},
+        )
+        decision = await gateway.request_approval(request)
+        assert decision.approved is True
+        assert decision.approver == "operator-a"
+        assert "release_readiness" in decision.rationale
+        assert any("APPROVAL REQUIRED" in line for line in outputs)
+
+    async def test_rejects_on_no(self) -> None:
+        from orchestrator.core.autonomy import HumanApprovalGateway
+
+        gateway = HumanApprovalGateway(
+            input_fn=lambda _prompt="": "n",
+            output_fn=lambda *a, **k: None,
+        )
+        request = ApprovalRequest(
+            workflow_id="wf-1",
+            stage_name="architecture_design",
+            stage_summary="Design review",
+        )
+        decision = await gateway.request_approval(request)
+        assert decision.approved is False
+
+    async def test_rejects_on_empty_default(self) -> None:
+        from orchestrator.core.autonomy import HumanApprovalGateway
+
+        gateway = HumanApprovalGateway(
+            input_fn=lambda _prompt="": "",
+            output_fn=lambda *a, **k: None,
+        )
+        request = ApprovalRequest(
+            workflow_id="wf-1",
+            stage_name="validation",
+            stage_summary="QC",
+        )
+        decision = await gateway.request_approval(request)
+        assert decision.approved is False
+
+    async def test_retries_until_valid_answer(self) -> None:
+        from orchestrator.core.autonomy import HumanApprovalGateway
+
+        answers = iter(["maybe", "YES"])
+        gateway = HumanApprovalGateway(
+            input_fn=lambda _prompt="": next(answers),
+            output_fn=lambda *a, **k: None,
+        )
+        request = ApprovalRequest(
+            workflow_id="wf-1",
+            stage_name="release_readiness",
+            stage_summary="Final release check",
+        )
+        decision = await gateway.request_approval(request)
+        assert decision.approved is True
+
+    async def test_engine_accepts_human_gateway_approval(
+        self, requirement: Requirement, single_stage_definition: WorkflowDefinition
+    ) -> None:
+        from orchestrator.core.autonomy import HumanApprovalGateway
+
+        engine = WorkflowEngine(
+            definition=single_stage_definition,
+            stages={"protected": _RequiresApprovalStage()},
+            approval_gateway=HumanApprovalGateway(
+                input_fn=lambda _prompt="": "y",
+                output_fn=lambda *a, **k: None,
+            ),
+        )
+        state = await engine.run(requirement)
+        assert state.status == WorkflowStatus.COMPLETED
+        assert state.approvals
+        assert state.approvals[0].status == ApprovalStatus.APPROVED

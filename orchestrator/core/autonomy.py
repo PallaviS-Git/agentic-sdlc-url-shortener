@@ -26,9 +26,11 @@ Import chain: stdlib + pydantic only. No orchestrator imports here.
 """
 from __future__ import annotations
 
+import asyncio
 import enum
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -486,6 +488,72 @@ class EscalatingApprovalGateway(ApprovalGateway):
                 return final_decision
 
         return final_decision
+
+
+class HumanApprovalGateway(ApprovalGateway):
+    """
+    CLI human-in-the-loop approval gateway for live demos and operator use.
+
+    Prints the approval request to stdout and blocks until the operator
+    answers ``y`` / ``n`` (or equivalent). Inject ``input_fn`` / ``output_fn``
+    in tests to avoid real stdin.
+
+    Example::
+
+        gateway = HumanApprovalGateway(approver="alice")
+        engine = WorkflowEngine(..., approval_gateway=gateway)
+    """
+
+    def __init__(
+        self,
+        *,
+        approver: str = "human-operator",
+        input_fn: Callable[..., str] | None = None,
+        output_fn: Callable[..., None] | None = None,
+    ) -> None:
+        self.approver = approver
+        self._input: Callable[..., str] = input_fn if input_fn is not None else input
+        self._output: Callable[..., None] = (
+            output_fn if output_fn is not None else print
+        )
+
+    async def request_approval(self, request: ApprovalRequest) -> ApprovalDecision:
+        self._output("")
+        self._output("=" * 60)
+        self._output("APPROVAL REQUIRED")
+        self._output("=" * 60)
+        self._output(f"  Workflow : {request.workflow_id}")
+        self._output(f"  Stage    : {request.stage_name}")
+        self._output(f"  Agent    : {request.requesting_agent}")
+        self._output(f"  Summary  : {request.stage_summary}")
+        if request.risk_context:
+            self._output(f"  Risk     : {request.risk_context}")
+        if request.action is not None:
+            self._output(f"  Action   : {request.action}")
+        self._output("=" * 60)
+
+        while True:
+            raw = await asyncio.to_thread(
+                self._input, "Approve this stage? [y/N]: "
+            )
+            answer = (raw or "").strip().lower()
+            if answer in {"y", "yes"}:
+                return ApprovalDecision(
+                    request_id=request.id,
+                    approved=True,
+                    approver=self.approver,
+                    rationale=f"Human approved stage '{request.stage_name}'",
+                    escalation_level=request.escalation_level,
+                )
+            if answer in {"n", "no", ""}:
+                return ApprovalDecision(
+                    request_id=request.id,
+                    approved=False,
+                    approver=self.approver,
+                    rationale=f"Human rejected stage '{request.stage_name}'",
+                    escalation_level=request.escalation_level,
+                )
+            self._output("Please answer 'y' or 'n'.")
 
 
 # ─── Default policy ───────────────────────────────────────────────────────────

@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     # ── Orchestrator ──────────────────────────────────────────────────────────
     max_stage_retries: int = 3
     approval_timeout_seconds: int = 300
+    # Reserved for optional durable workflow snapshots (not wired in WorkflowEngine yet).
     state_file_path: str = "orchestrator_state.json"
 
 

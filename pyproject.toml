@@ -31,17 +31,11 @@ dependencies = [
     # HTTP client (integration tests + internal calls)
     "httpx==0.27.0",
 
-    # Retry / resilience (used in orchestration engine)
-    "tenacity==8.3.0",
-
     # DAG / graph (used in orchestration engine)
     "networkx==3.3",
 
     # Structured logging
     "structlog==24.2.0",
-
-    # Metrics
-    "prometheus-client==0.20.0",
 
     # CLI / terminal output (orchestrator UI)
     "rich==13.7.1",
@@ -79,7 +73,7 @@ python_functions = ["test_*"]
 addopts = "--strict-markers -v --tb=short"
 markers = [
     "unit: pure unit tests — no I/O, no network, no DB",
-    "integration: requires running postgres and redis",
+    "integration: ASGI integration tests (SQLite in-memory; no live Postgres/Redis required)",
     "orchestrator: tests for the agentic orchestration layer",
     "slow: tests that take more than 2 seconds",
 ]

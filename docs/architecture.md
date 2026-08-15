@@ -2,7 +2,8 @@
 
 > **Classification:** Schwab Internal — Interview Assignment  
 > **Version:** 1.0.0 | **Status:** Complete prototype  
-> **Tests:** 864 passing | **Coverage:** 95.56%
+> **Tests:** 893 passing | **Coverage:** ≥80% required (~95% recent)  
+> **Engineering summary:** [engineering-summary.md](engineering-summary.md) — scope, risks, limitations, assumptions, judgment
 
 ---
 
@@ -1043,27 +1044,16 @@ class WorkflowObservabilityReport:
 
 ### 22.1 Test inventory
 
-| Suite | File | Tests | Focus |
+Verified with `pytest --collect-only` (893 total):
+
+| Suite | Location | Tests | Focus |
 |---|---|---|---|
-| Approval | `test_approval.py` | 54 | Approval lifecycle, gateway implementations, escalation, override |
-| Context | `test_context.py` | 36 | ExecutionContext propagation, snapshot isolation, merge |
-| Failure | `test_failure.py` | 49 | Retry, exhaustion, non-retryable, fallback, rollback, safe-stop |
-| Governance | `test_governance.py` | 53 | Policy evaluation, built-in policies, integration via engine |
-| Graph | `test_graph.py` | 45 | DAG construction, cycle detection, parallel groups, gates |
-| Lineage | `test_lineage.py` | 67 | Provenance queries, decision chains, build_lineage |
-| Observability | `test_observability.py` | 53 | Structured logs, trace, metrics, MTTR |
-| Replanning | `test_replanning.py` | 32 | Impact analysis, replan execution, cycle count, lineage |
-| Results | `test_results.py` | 35 | Artifact, Decision, ValidationResult, Risk, Approval models |
-| Task scheduler | `test_task_scheduler.py` | 29 | Intra-stage task dependencies |
-| Workflow engine | `test_workflow_engine.py` | 61 | Engine lifecycle, audit trail, parallel, approval, lineage |
-| Greenfield scenario | `test_greenfield.py` | 61 | End-to-end 8-stage SDLC, artifacts, approvals, replan |
-| Brownfield scenario | `test_brownfield.py` | 63 | Codebase analysis, impact map, change plan precision |
-| Ambiguous scenario | `test_ambiguous.py` | 63 | Ambiguity detection, clarification, normalisation sensitivity |
-| Validation pass | `test_validation_pass.py` | 87 | Gap coverage: API handlers, repository, models, edge cases, failure scenarios |
-| URL service unit | `test_url_service.py` | 20 | `UrlService`, `generate_short_code` (mock repo) |
-| URL models | `test_models.py` | 28 | `ShortUrl` ORM properties |
-| URL schemas | `test_schemas.py` | 15 | Pydantic schema validation |
-| **Total** | | **864** | |
+| Unit (URL shortener) | `tests/unit/` | 67 | Models, schemas, `UrlService` |
+| Orchestrator | `tests/orchestrator/` | 531 | Engine, gates, failure, governance, lineage, replan, observability, approvals |
+| Scenarios | `tests/scenarios/` | 190 | Greenfield, brownfield, ambiguous E2E on real `WorkflowEngine` |
+| Validation pass | `tests/test_validation_pass.py` | 87 | Gap coverage across API/repo/edge paths |
+| Integration | `tests/integration/` | 18 | ASGI stack (SQLite in-memory fixtures) |
+| **Total** | | **893** | |
 
 ### 22.2 Coverage
 
@@ -1090,7 +1080,7 @@ class WorkflowObservabilityReport:
 | `orchestrator/scenarios/brownfield.py` | 89% |
 | `orchestrator/scenarios/greenfield.py` | 89% |
 | `url_shortener/api/urls.py` | 85% |
-| **Overall** | **95.56%** |
+| **Overall** | **~95%** (fail_under=80 in `pyproject.toml`) |
 
 ### 22.3 Test types
 
@@ -1130,7 +1120,7 @@ python -m pytest tests/ --ignore=tests/integration \
     --cov=orchestrator --cov=url_shortener \
     --cov-report=term-missing
 
-# Integration tests (requires PostgreSQL + Redis via docker-compose)
+# Integration tests (ASGI + SQLite in-memory; no Docker required)
 python -m pytest tests/integration/
 
 # Single scenario

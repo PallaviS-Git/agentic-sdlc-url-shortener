@@ -662,3 +662,89 @@ class TestAmbiguousReplan:
         assert "task_planning" in impact.impacted_stages
         assert "validation" in impact.impacted_stages
         assert "ambiguity_detection" in impact.preserved_stages
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 12. HumanClarificationGateway (CLI)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestHumanClarificationGateway:
+    async def test_records_human_answers(self) -> None:
+        from orchestrator.scenarios.ambiguous import (
+            ClarificationQuestion,
+            HumanClarificationGateway,
+        )
+
+        q = ClarificationQuestion(
+            id="Q1",
+            question="What metrics?",
+            context="scope",
+            default="clicks only",
+            impact="schema",
+            ambiguity_id="analytics_metrics",
+            options=["clicks only", "full analytics"],
+        )
+        gateway = HumanClarificationGateway(
+            input_fn=lambda _prompt="": "full analytics",
+            output_fn=lambda *a, **k: None,
+        )
+        answers = await gateway.clarify([q])
+        assert len(answers) == 1
+        assert answers[0].answer == "full analytics"
+        assert answers[0].answered_by == "human"
+
+    async def test_empty_input_uses_safe_default(self) -> None:
+        from orchestrator.scenarios.ambiguous import (
+            ClarificationQuestion,
+            HumanClarificationGateway,
+        )
+
+        q = ClarificationQuestion(
+            id="Q2",
+            question="Who can view?",
+            context="auth",
+            default="URL owner only",
+            impact="auth middleware",
+            ambiguity_id="access_control",
+        )
+        gateway = HumanClarificationGateway(
+            input_fn=lambda _prompt="": "  ",
+            output_fn=lambda *a, **k: None,
+        )
+        answers = await gateway.clarify([q])
+        assert answers[0].answer == "URL owner only"
+        assert answers[0].answered_by == "default"
+
+    async def test_scenario_runs_with_human_gateway(self) -> None:
+        """Injected CLI answers drive a full ambiguous run to COMPLETED."""
+        from orchestrator.scenarios.ambiguous import HumanClarificationGateway
+
+        # Seven questions in the scenario; answer all with non-empty strings.
+        replies = iter(
+            [
+                "clicks only",
+                "URL owner only",
+                "90 days",
+                "async background",
+                "REST API only",
+                "preserve redirect SLA",
+                "hashed IP (SHA-256)",
+            ]
+        )
+        gateway = HumanClarificationGateway(
+            input_fn=lambda _prompt="": next(replies),
+            output_fn=lambda *a, **k: None,
+        )
+        state = await run_ambiguous_scenario(
+            clarification_gateway=gateway,
+            approval_gateway=AutoApproveGateway(),
+        )
+        assert state.status == WorkflowStatus.COMPLETED
+        human_decs = [
+            d
+            for ctx in state.stages.values()
+            for d in ctx.decisions
+            if d.made_by == "human"
+        ]
+        assert human_decs
