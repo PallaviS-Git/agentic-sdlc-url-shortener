@@ -39,7 +39,7 @@ Coverage
 24. Approval rejection at change_planning fails the workflow
 25. Replan after architecture change replans downstream stages
 
-asyncio_mode=auto (pyproject.toml).
+asyncio_mode=auto (pytest.ini).
 """
 from __future__ import annotations
 

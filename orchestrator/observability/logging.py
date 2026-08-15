@@ -44,11 +44,17 @@ def configure_logging(
     else:
         renderer = structlog.dev.ConsoleRenderer(colors=True)
 
+    # Reset any prior configuration (e.g. from tests) so factory/processor
+    # pairing cannot drift into an incompatible PrintLogger + add_logger_name state.
+    structlog.reset_defaults()
+
     structlog.configure(
         processors=[*shared_processors, renderer],
         wrapper_class=structlog.make_filtering_bound_logger(log_level),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+        # Must be stdlib LoggerFactory: add_logger_name requires logger.name.
+        # PrintLoggerFactory breaks FastAPI lifespan startup with AttributeError.
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
 
@@ -58,6 +64,7 @@ def configure_logging(
         format="%(message)s",
         stream=sys.stdout,
         level=log_level,
+        force=True,
     )
 
 

@@ -126,7 +126,6 @@ url_shortener/
 | Structured logging | structlog | — |
 | DAG execution | networkx | ≥ 3.0 |
 | Async concurrency | asyncio (stdlib) | — |
-| Migrations | Alembic | — |
 | Test runner | pytest + pytest-asyncio | — |
 | HTTP test client | httpx AsyncClient | — |
 
@@ -1080,7 +1079,7 @@ Verified with `pytest --collect-only` (893 total):
 | `orchestrator/scenarios/brownfield.py` | 89% |
 | `orchestrator/scenarios/greenfield.py` | 89% |
 | `url_shortener/api/urls.py` | 85% |
-| **Overall** | **~95%** (fail_under=80 in `pyproject.toml`) |
+| **Overall** | **~95%** |
 
 ### 22.3 Test types
 

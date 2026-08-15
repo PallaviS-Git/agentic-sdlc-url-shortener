@@ -1275,6 +1275,15 @@ class TestObservabilityLogging:
         # Should not raise for unknown level (getattr fallback)
         configure_logging(level="NOTREAL")
 
+    def test_configure_logging_allows_info_emit(self) -> None:
+        """Regression: PrintLogger + add_logger_name crashed app startup."""
+        import structlog
+        from orchestrator.observability.logging import configure_logging
+
+        configure_logging(level="INFO", environment="development")
+        log = structlog.get_logger("startup-regression")
+        log.info("application_startup", app="test", version="0.0.0")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Observability metrics — edge cases

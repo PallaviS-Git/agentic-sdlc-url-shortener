@@ -29,7 +29,8 @@ Full setup (venv, tests, scenarios): [docs/setup.md](docs/setup.md)
 python -m venv .venv
 .venv\Scripts\activate          # Windows
 # source .venv/bin/activate     # Linux/macOS
-pip install -e ".[dev]"
+pip install --upgrade pip
+pip install -r requirements.txt
 cp .env.example .env
 
 # Start backing services only (URL shortener against Postgres)
@@ -62,7 +63,6 @@ python -m pytest tests/integration/
 | `tests/integration/` | ASGI integration tests |
 | `tests/orchestrator/` | Engine and orchestration unit tests |
 | `tests/scenarios/` | End-to-end scenario tests |
-| `alembic/` | Database migration scripts |
 | `docs/` | Architecture, setup, engineering summary |
 
 ---

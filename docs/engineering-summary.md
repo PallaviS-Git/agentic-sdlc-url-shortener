@@ -60,7 +60,7 @@ python -m pytest tests/
 python -m pytest tests/integration/
 ```
 
-Coverage target: ≥80% (`pyproject.toml`); recent runs ~95% on orchestrator + url_shortener.
+Coverage target: ≥80%; recent runs ~95% on orchestrator + url_shortener.
 
 **Validation approach:** each stage emits `ValidationResult` records (pass/fail + severity + evidence). Scenario exit gates fail the stage if critical validations fail. Humans approve high-impact stages via `ApprovalGateway`. Full inspection recipes: [setup.md §12](setup.md#12-viewing-validation-results).
 

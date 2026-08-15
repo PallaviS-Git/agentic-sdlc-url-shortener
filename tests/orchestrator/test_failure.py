@@ -23,7 +23,7 @@ Required coverage:
   18. RetryPolicy.classify() respects MRO for base-class matching
   19. max_attempts bound: Field(ge=1) prevents 0 or negative values
 
-No I/O, no network, no DB. asyncio_mode=auto (pyproject.toml) handles async tests.
+No I/O, no network, no DB. asyncio_mode=auto (pytest.ini) handles async tests.
 """
 from __future__ import annotations
 

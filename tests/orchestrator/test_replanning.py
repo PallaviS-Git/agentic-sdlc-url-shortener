@@ -51,7 +51,7 @@ Lineage
   31. ReplanResult has correct stages_preserved and stages_replanned
   32. Multiple replan cycles each get a unique ReplanResult in history
 
-asyncio_mode=auto (pyproject.toml).
+asyncio_mode=auto (pytest.ini).
 """
 from __future__ import annotations
 

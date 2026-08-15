@@ -17,7 +17,7 @@ Also covers:
   - Audit trail completeness
   - Blocked stages recorded in WorkflowState
 
-No I/O, no network, no DB. asyncio_mode=auto (pyproject.toml) handles async tests.
+No I/O, no network, no DB. asyncio_mode=auto (pytest.ini) handles async tests.
 """
 from __future__ import annotations
 

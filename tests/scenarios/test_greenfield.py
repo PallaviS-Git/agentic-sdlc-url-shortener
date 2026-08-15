@@ -31,7 +31,7 @@ What is tested
 19. Stage IDs are unique across the run
 20. WorkflowState.completed_at is set after run
 
-asyncio_mode=auto (pyproject.toml).
+asyncio_mode=auto (pytest.ini).
 """
 from __future__ import annotations
 

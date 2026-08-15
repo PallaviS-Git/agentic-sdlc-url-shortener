@@ -46,7 +46,7 @@ Integration (through WorkflowEngine):
   38. Downstream stages BLOCKED when upstream is governance-blocked
   39. Multiple policies — all evaluated even when earlier one fires BLOCK
 
-asyncio_mode=auto (pyproject.toml).
+asyncio_mode=auto (pytest.ini).
 """
 from __future__ import annotations
 

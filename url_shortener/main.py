@@ -14,7 +14,8 @@ from url_shortener.api.exceptions import (
 )
 from url_shortener.api.urls import router as url_router
 from url_shortener.config import Settings, get_settings
-from url_shortener.database import build_engine, build_session_factory
+from url_shortener.database import Base, build_engine, build_session_factory
+from url_shortener.models.url import ShortUrl  # noqa: F401 — register ORM metadata
 from url_shortener.services.exceptions import CodeGenerationError, ShortCodeNotFoundError
 
 logger = structlog.get_logger(__name__)
@@ -28,6 +29,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     DB setup: if `app.state.session_factory` is already populated (e.g. by a
     test fixture that injects a pre-created engine), skip engine creation so
     tests remain in full control of the database connection.
+
+    Otherwise create tables with SQLAlchemy ``create_all`` (local SQLite demo;
+    no Alembic migrations).
     """
     settings: Settings = app.state.settings
     configure_logging(
@@ -41,6 +45,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.engine = engine
         app.state.session_factory = build_session_factory(engine)
         engine_owned = True
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("schema_ready", tables=list(Base.metadata.tables))
 
     logger.info(
         "application_startup",

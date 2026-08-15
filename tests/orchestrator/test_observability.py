@@ -63,7 +63,7 @@ Integration (engine + observability together)
   46. stage_id is unique per workflow run
   47. completed_at set by engine on both success and failure
 
-asyncio_mode=auto (pyproject.toml).
+asyncio_mode=auto (pytest.ini).
 """
 from __future__ import annotations
 

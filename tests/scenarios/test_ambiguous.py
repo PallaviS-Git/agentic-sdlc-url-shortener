@@ -43,7 +43,7 @@ Coverage
 29. Execution trace has DECISION steps from clarification
 30. Replanning after normalization change works
 
-asyncio_mode=auto (pyproject.toml).
+asyncio_mode=auto (pytest.ini).
 """
 from __future__ import annotations
 

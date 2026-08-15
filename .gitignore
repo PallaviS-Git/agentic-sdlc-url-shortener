@@ -53,6 +53,11 @@ coverage.json
 pytest-cache-files-*/
 cover/
 
+# Local SQLite smoke / offline runs
+local_dev.db
+local_dev.db-*
+*.db
+
 # Local orchestrator / scenario demo artifacts
 orchestrator_state.json
 *_report.json
@@ -162,6 +167,7 @@ activemq-data/
 .venv
 env/
 venv/
+myvenv/
 ENV/
 env.bak/
 venv.bak/

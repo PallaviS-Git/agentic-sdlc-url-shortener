@@ -33,7 +33,7 @@ Related: [engineering-summary.md](engineering-summary.md) (risks, limitations, j
 
 | Requirement | Version | Notes |
 |---|---|---|
-| Python | **3.11+** | `pyproject.toml` declares `requires-python = ">=3.11"` |
+| Python | **3.11+** | Required by FastAPI / Pydantic v2 stack |
 | pip | latest | Ships with Python; upgrade with `pip install --upgrade pip` |
 | Git | any | To clone the repository |
 
@@ -82,32 +82,29 @@ python --version
 
 ## 3. Dependency Installation
 
-Install all runtime **and** development dependencies in editable mode:
+Install all dependencies from `requirements.txt`. Run commands from the repository root so `orchestrator` and `url_shortener` import correctly.
 
 ```bash
 pip install --upgrade pip
-pip install -e ".[dev]"
+pip install -r requirements.txt
 ```
 
-The `.[dev]` extra installs everything needed for testing (pytest, pytest-asyncio, httpx, aiosqlite, etc.) in addition to the production dependencies.
-
-**What this installs** (from `pyproject.toml`):
+**What `requirements.txt` installs:**
 
 | Package | Purpose |
 |---|---|
 | `fastapi==0.111.0` | Web framework for URL shortener |
 | `uvicorn[standard]==0.30.1` | ASGI server |
 | `sqlalchemy[asyncio]==2.0.30` | Async ORM |
-| `alembic==1.13.1` | Database migrations |
 | `asyncpg==0.29.0` | PostgreSQL async driver |
 | `networkx==3.3` | DAG engine (orchestrator) |
 | `pydantic==2.7.1` | Data validation |
 | `pydantic-settings==2.3.1` | Config from env vars |
 | `structlog==24.2.0` | Structured logging |
 | `httpx==0.27.0` | HTTP client (integration tests) |
+| `aiosqlite==0.20.0` | SQLite async driver |
 | `pytest==8.2.2` | Test runner |
 | `pytest-asyncio==0.23.7` | Async test support |
-| `aiosqlite==0.20.0` | SQLite async driver (integration tests — no Docker needed) |
 
 Verify the install:
 
@@ -204,37 +201,29 @@ docker compose down          # stop containers, keep data volume
 docker compose down -v       # stop containers, also remove postgres_data volume
 ```
 
-### Option B — Local uvicorn (requires local PostgreSQL + Redis)
+### Option B — Local uvicorn with SQLite (no Docker)
 
-If PostgreSQL and Redis are running locally (or via `docker compose up postgres redis -d`):
-
-**Step 1: Apply database migrations**
-
-```bash
-DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/urlshortener" \
-  alembic upgrade head
-```
-
-Windows PowerShell:
+Tables are created automatically on startup:
 
 ```powershell
-$env:DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/urlshortener"
-alembic upgrade head
+$env:DATABASE_URL = "sqlite+aiosqlite:///./local_dev.db"
+$env:BASE_URL = "http://127.0.0.1:8000"
+uvicorn url_shortener.main:app --host 127.0.0.1 --port 8000
 ```
-
-**Step 2: Start the server**
 
 ```bash
-# Unix / macOS
-DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/urlshortener" \
-  uvicorn url_shortener.main:app --host 0.0.0.0 --port 8000 --reload
-
-# Windows PowerShell
-$env:DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/urlshortener"
-uvicorn url_shortener.main:app --host 0.0.0.0 --port 8000 --reload
+DATABASE_URL="sqlite+aiosqlite:///./local_dev.db" \
+BASE_URL="http://127.0.0.1:8000" \
+  uvicorn url_shortener.main:app --host 127.0.0.1 --port 8000
 ```
 
-The `--reload` flag enables auto-reload on source changes (development only).
+Then open http://127.0.0.1:8000/docs or:
+
+```bash
+curl http://127.0.0.1:8000/health
+curl -X POST http://127.0.0.1:8000/shorten -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com"}'
+```
 
 ### API Endpoints
 
@@ -278,7 +267,7 @@ Each runner is fully self-contained — it creates the `WorkflowDefinition`, ins
 
 ## 7. Running Tests
 
-The full suite is **893** tests. Non-integration tests (**875**) need no running services (no Docker, no PostgreSQL, no Redis). Integration tests in `tests/integration/` (**18**) use SQLite in-memory via `aiosqlite` and also do not require Docker.
+The full suite is **894** tests. Non-integration tests (**876**) need no running services (no Docker, no PostgreSQL, no Redis). Integration tests in `tests/integration/` (**18**) use SQLite in-memory via `aiosqlite` and also do not require Docker.
 
 ### Run the full suite
 
@@ -306,7 +295,6 @@ python -m pytest tests/ --ignore=tests/integration \
 Expected summary (figures drift slightly as the suite evolves):
 
 ```
-Required test coverage of 80.0% reached. Total coverage: ~95%
 875 passed
 ```
 
@@ -1245,12 +1233,13 @@ Safe-stop events  : ['safe_stop_triggered', 'workflow_safe_stopped']
 
 ### `ModuleNotFoundError: No module named 'orchestrator'`
 
-**Cause:** Package not installed in editable mode.
+**Cause:** Commands were not run from the repository root, so Python cannot find the local packages.
 
-**Fix:**
+**Fix:** `cd` into the repo root, then:
 
 ```bash
-pip install -e ".[dev]"
+pip install -r requirements.txt
+python -c "import orchestrator; print(orchestrator.__file__)"
 ```
 
 Verify:
@@ -1268,7 +1257,7 @@ python -c "import orchestrator; print(orchestrator.__file__)"
 **Fix:**
 
 ```bash
-pip install -e ".[dev]"
+pip install -r requirements.txt
 ```
 
 ---
@@ -1291,25 +1280,7 @@ docker compose ps
 psql -U postgres -c "CREATE DATABASE urlshortener;"
 ```
 
-Then run migrations:
-
-```bash
-DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/urlshortener" \
-  alembic upgrade head
-```
-
----
-
-### `alembic.util.exc.CommandError: Can't locate revision`
-
-**Cause:** Alembic can't find the migration files.
-
-**Fix:** Run Alembic from the repository root (where `alembic.ini` lives):
-
-```bash
-cd agentic-sdlc-url-shortener   # ensure you're at the repo root
-alembic upgrade head
-```
+Tables are created automatically when the app starts.
 
 ---
 
@@ -1347,17 +1318,17 @@ BASE_URL=http://localhost:8001
 
 ### `pytest: error: unrecognized arguments`
 
-**Cause:** `pyproject.toml` sets `--strict-markers` and you may have added an unknown marker.
+**Cause:** `pytest.ini` sets `--strict-markers` and you may have added an unknown marker.
 
-**Fix:** Register the marker in `pyproject.toml` under `[tool.pytest.ini_options] markers` or remove the marker from the test.
+**Fix:** Register the marker in `pytest.ini` under `markers` or remove the marker from the test.
 
 ---
 
 ### `AttributeError: 'PrintLogger' object has no attribute 'name'`
 
-**Cause:** `configure_logging()` was called in a test without resetting `structlog` state afterwards. The `add_logger_name` processor requires a stdlib-compatible logger (has `.name`), but the default structlog `PrintLogger` does not.
+**Cause (fixed in current code):** `configure_logging()` previously paired `PrintLoggerFactory` with `structlog.stdlib.add_logger_name`, which requires a stdlib logger that has `.name`. It now uses `structlog.stdlib.LoggerFactory()`.
 
-**Fix:** In test code, reset structlog after calling `configure_logging()`:
+If an old process still shows this, restart uvicorn. In tests, keep resetting structlog after calling `configure_logging()`:
 
 ```python
 import structlog
@@ -1366,16 +1337,6 @@ def test_something():
     from orchestrator.observability.logging import configure_logging
     configure_logging(level="INFO", environment="production")
     # ... test ...
-    structlog.reset_defaults()   # ← restore default state
-```
-
-Or use a pytest fixture with `yield`:
-
-```python
-@pytest.fixture(autouse=True)
-def reset_structlog():
-    yield
-    import structlog
     structlog.reset_defaults()
 ```
 

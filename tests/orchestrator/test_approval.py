@@ -28,7 +28,7 @@ Required coverage:
   24. Downstream stages after an approved stage still execute (no collateral block)
   25. is_override flag propagated to Approval record
 
-No I/O, no network, no DB. asyncio_mode=auto (pyproject.toml) handles async tests.
+No I/O, no network, no DB. asyncio_mode=auto (pytest.ini) handles async tests.
 """
 from __future__ import annotations
 

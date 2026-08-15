@@ -9,13 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only dependency manifest first (cache layer)
-COPY pyproject.toml .
-COPY README.md .
+# Copy dependency manifest first (cache layer)
+COPY requirements.txt .
 
-# Install all dependencies (including dev for test stage)
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -e ".[dev]"
+    && pip install --no-cache-dir -r requirements.txt
 
 # ─── Stage 2: production image ────────────────────────────────────────────────
 FROM python:3.11-slim AS final
@@ -37,10 +35,11 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application source
 COPY --chown=appuser:appuser orchestrator/ ./orchestrator/
 COPY --chown=appuser:appuser url_shortener/ ./url_shortener/
-COPY --chown=appuser:appuser alembic/ ./alembic/
-COPY --chown=appuser:appuser alembic.ini .
-COPY --chown=appuser:appuser pyproject.toml .
+COPY --chown=appuser:appuser requirements.txt .
 COPY --chown=appuser:appuser README.md .
+
+# Make local packages importable without editable install
+ENV PYTHONPATH=/app
 
 USER appuser
 
